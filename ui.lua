@@ -153,11 +153,15 @@ end
 function checkQuit(menu, output)
     event, key = os.pullEvent("key_up")
     if (key == keys.q) then
-        menu.active = false
-        output.clear()
-        term.clear()
-        term.setCursorPos(1,1)
+        quit(menu, output)
     end
+end
+
+function quit(menu, output)
+    menu.active = false
+    output.clear()
+    term.clear()
+    term.setCursorPos(1,1)
 end
 
 
@@ -209,11 +213,55 @@ function menu_init(output)
             output.setBackgroundColor(colors.black)
             output.clear()
             drawButtons(menu.buttons, output)
+            if (menu.header) then
+                menu.header()
+            end
+            if (menu.footer) then
+                menu.footer()
+            end
             if (extra) then
                 extra(output)
             end
         end
 
+    end
+
+    function generic_header(text, tcolor, bcolor)
+        return function ()
+            local oldbg = output.getBackgroundColor()
+            local oldtc = output.getTextColor()
+            local width, height = output.getSize()
+            local startx = math.floor(width / 2 - (#text / 2))
+            output.setBackgroundColor(bcolor or colors.black)
+            output.setTextColor(tcolor or colors.white)
+            output.setCursorPos(1, 1)
+            for i = 1, width  do
+                output.write(" ")                
+            end
+            output.setCursorPos(startx, 1)
+            output.write(text)
+            output.setBackgroundColor(oldbg)
+            output.setTextColor(oldtc)
+        end
+    end
+    
+    function generic_footer(text, tcolor, bcolor)
+        return function ()
+            local oldbg = output.getBackgroundColor()
+            local oldtc = output.getTextColor()
+            local width, height = output.getSize()
+            local startx = math.floor(width / 2 - (#text / 2))
+            output.setBackgroundColor(bcolor or colors.black)
+            output.setTextColor(tcolor or colors.white)
+            output.setCursorPos(1, height)
+            for i = 1, width  do
+                output.write(" ")                
+            end
+            output.setCursorPos(startx, height)
+            output.write(text)
+            output.setBackgroundColor(oldbg)
+            output.setTextColor(oldtc)
+        end
     end
 
     function generic_close(menu)
@@ -233,8 +281,8 @@ function menu_init(output)
     -------------------
     ---- MAIN MENU ----
     
-    main_menu.header = "Cannon Controller"
-    main_menu.footer = "Version: Amaryllis"
+    main_menu.header = generic_header("Cannon Controller", colors.red)
+    main_menu.footer = generic_footer("Version: Bromeliad", colors.yellow)
     main_menu.active = false
     main_menu.buttons = {}
     local btns = main_menu.buttons
@@ -245,6 +293,9 @@ function menu_init(output)
             colors.red, 17, 8, 7, 5)
     makeButton(btns, "history", "History", function () print("history") end,
             colors.lightBlue, 26, 9, 9, 3)
+
+    makeButton(btns, "quit", "Quit", function () quit(main_menu, output) end,
+            colors.gray, 2, 16, 6, 3)
 
     main_menu.open = generic_open(main_menu)
 
