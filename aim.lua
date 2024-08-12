@@ -67,7 +67,7 @@ const = {}
 -- NOTE: DEFAULT CHARGE POWER WAS INCREASED FROM 20m/s TO 40m/s
 const.CHARGE_POWER = 40 -- Base added speed of a powder charge is 40m/s
 const.GRAVITY = vector.new(0,-0.05,0)
-const.DRAG = 0.99
+const.DRAG = 0.001
 const.AIM_TRIES = 12
 const.DEBUG = true
 
@@ -221,7 +221,7 @@ end
 ------------------------------------
 
 -- Returns the distance to target parallel to the XZ plane
-function getHorizDistance(target)
+local function getHorizDistance(target)
     return vector.new(target.x, 0, target.z):length()
 end
 
@@ -270,7 +270,7 @@ end
 -- yaw, and queues two timer events that will go off
 -- once the cannon is in position. Then the function
 -- stops the cannon's motion and returns true.
-function aimCannon(pitch, yaw, rpm)
+local function aimCannon(pitch, yaw, rpm)
     -- cannon controller and yaw controller move at 1/8 speed
     -- of the rpm, hence the (1/8) factor in the equation for dps
     local dps = 360 * rpm / 60 * (1/8)
@@ -314,7 +314,7 @@ function aimCannon(pitch, yaw, rpm)
     return true
 end
 
-function startTilting(tiltDown)
+local function startTilting(tiltDown)
     if (const.DEBUG) then
         log("tiltDown: " .. (tiltDown and "true" or "false"))
     end
@@ -325,7 +325,7 @@ function startTilting(tiltDown)
 end
 
 
-function startTurning(turnRight)
+local function startTurning(turnRight)
     if (const.DEBUG) then
         log("turnRight: " .. (turnRight and "true" or "false"))
     end
@@ -335,7 +335,7 @@ function startTurning(turnRight)
     rs.setOutput(data.TURN_CLUTCH, true)
 end
 
-function stopCannonTilt()    
+local function stopCannonTilt()    
     if (const.DEBUG) then
     log("stopping tilt")
 end
@@ -343,7 +343,7 @@ end
     rs.setOutput(data.TILT_GEARSHIFT, false)
 end
 
-function stopCannonTurn()
+local function stopCannonTurn()
     if (const.DEBUG) then
         log("stopping turn")
     end
@@ -351,18 +351,18 @@ function stopCannonTurn()
     rs.setOutput(data.TURN_GEARSHIFT, false)
 end
 
-function getTiltSeconds(pitch, dps)
+local function getTiltSeconds(pitch, dps)
     return math.abs(pitch / dps)
 end
 
-function getTurnSeconds(yaw, dps)
+local function getTurnSeconds(yaw, dps)
     return math.abs(yaw / dps)
 end
 
 ------------------------------------
 -- CANNON SETUP
 ------------------------------------
-function save_data()
+local function saveData()
     f = io.open("cannon_data.json", "w")
     if (f) then
         f:write(textutils.serialiseJSON(data))
@@ -373,7 +373,7 @@ function save_data()
     end
 end
 
-function load_data()
+local function load_data()
     f = io.open("cannon_data.json", "r")
     if (f) then
         temp = textutils.unserialiseJSON(f:read("a"))
@@ -385,7 +385,7 @@ function load_data()
 end
 
 -- call using set_data{} and include charges = 4, etc. in the table
-function set_data(t)
+local function set_data(t)
     if (t.charges) then
         data.charges = t.charges
     end
@@ -419,7 +419,7 @@ end
 -- INTERFACE
 ------------------------------------
 
-function queryAim()
+local function queryAim()
     print("Enter the coordinates (X, Y, Z) you would like to shoot at:")
 
     print("X: ")
@@ -444,7 +444,7 @@ function queryAim()
 end
 
 
-function queryData() 
+local function queryData() 
     print("Enter the charge, length, rpm, mount x, \
     mount y, mount z, and facing values on a single line, separated by spaces.")
     local str = io.read()
@@ -459,7 +459,7 @@ end
 
 
 -- Aims the cannon at the target (which is a RELATIVE position vector)
-function targetAim(guess, speed, target, length, tries, manual)
+local function targetAim(guess, speed, target, length, tries, manual)
     if (manual) then
         print("Aiming Cannon")
     end
@@ -493,17 +493,17 @@ end
 -- LOGGING CODE
 ------------------------------------
 
-function init_log(filename)
+local function init_log(filename)
     const.LOG = io.open(filename, "w")
     log(os.date())
 end
 
 
-function log(str)
+local function log(str)
     const.LOG:write(str .. "\n")
 end
 
-function stop_log()
+local function stop_log()
     const.LOG:close()
 end
 
@@ -511,67 +511,69 @@ end
 -- MAIN PROGRAM CODE
 ------------------------------------
 
-local temp = load_data()
-print("loading cannon data...")
-if (temp) then
-    data = temp
-    print("loaded cannon data.")
-else print("failed to load cannon data.") end
+local function main(args)
+    local temp = load_data()
+    print("loading cannon data...")
+    if (temp) then
+        data = temp
+        print("loaded cannon data.")
+    else print("failed to load cannon data.") end
 
--- Initialize log
-init_log("latest.log")
+    -- Initialize log
+    init_log("latest.log")
 
--- aim [target x] [target y] [target z] [0 for low arc, 1 for high arc] ["relative" or "exact" (exact is default)]
-args = {...}
-if (#args > 0) then
-    if (#args >= 3 and tonumber(args[1]) ~= nil) then
+    -- aim [target x] [target y] [target z] [0 for low arc, 1 for high arc] ["relative" or "exact" (exact is default)]
+    args = {...}
+    if (#args > 0) then
+        if (#args >= 3 and tonumber(args[1]) ~= nil) then
 
-        -- default aim mode is exact
-        if (args[5] ~= nil and args[5] == "relative") then
-            target = vector.new(args[1], args[2], args[3])
-        else
-            target = vector.new(args[1], args[2], args[3]) - data.mount_xyz
-        end     
-        -- default initial trajectory is low
-        if (args[4] ~= nil and args[4] == "1") then
-            guess = 60
-        else
-            guess = 0
-        end
+            -- default aim mode is exact
+            if (args[5] ~= nil and args[5] == "relative") then
+                target = vector.new(args[1], args[2], args[3])
+            else
+                target = vector.new(args[1], args[2], args[3]) - data.mount_xyz
+            end     
+            -- default initial trajectory is low
+            if (args[4] ~= nil and args[4] == "1") then
+                guess = 60
+            else
+                guess = 0
+            end
 
-        targetAim(guess, data.charges * const.CHARGE_POWER, target, data.length, const.AIM_TRIES, false)
-    elseif (#args >= 1) then
-        if (string.lower(args[1]) == "setup") then
-            if (#args > 1) then
-                data = load_data() or {}
-                set_data{
-                    charges = tonumber(args[2]), 
-                    length = tonumber(args[3]),
-                    rpm = tonumber(args[4]),
-                    x = tonumber(args[5]),
-                    y = tonumber(args[6]),
-                    z = tonumber(args[7]),
-                    facing = args[8]}
-                save_data()
-            else 
-                local arr = queryData()
-                set_data{
-                    charges = tonumber(arr[1]), 
-                    length = tonumber(arr[2]),
-                    rpm = tonumber(arr[3]),
-                    x = tonumber(arr[4]),
-                    y = tonumber(arr[5]),
-                    z = tonumber(arr[6]),
-                    facing = arr[7]}
-                save_data()
+            targetAim(guess, data.charges * const.CHARGE_POWER, target, data.length, const.AIM_TRIES, false)
+        elseif (#args >= 1) then
+            if (string.lower(args[1]) == "setup") then
+                if (#args > 1) then
+                    data = load_data() or {}
+                    set_data{
+                        charges = tonumber(args[2]), 
+                        length = tonumber(args[3]),
+                        rpm = tonumber(args[4]),
+                        x = tonumber(args[5]),
+                        y = tonumber(args[6]),
+                        z = tonumber(args[7]),
+                        facing = args[8]}
+                    saveData()
+                else 
+                    local arr = queryData()
+                    setData{
+                        charges = tonumber(arr[1]), 
+                        length = tonumber(arr[2]),
+                        rpm = tonumber(arr[3]),
+                        x = tonumber(arr[4]),
+                        y = tonumber(arr[5]),
+                        z = tonumber(arr[6]),
+                        facing = arr[7]}
+                    saveData()
+                end
             end
         end
+    else 
+        queryAim()
     end
-else 
-    queryAim()
-end
 
-stop_log()
+    stop_log()
+end
 
 ------------------------------------
 -- INFO (OUTDATED)
@@ -603,3 +605,5 @@ stop_log()
 -- pitch = refineShot(0, speed, target, tolerance, length, tries, true)
 -- print("Shoot at pitch " .. pitch .. " to hit target.")
 -- aimCannon(pitch, yaw, 4)
+
+return {setData = setData, saveData = saveData, queryAim = queryAim, targetAim = targetAim, cli = main}
