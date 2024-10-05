@@ -8,55 +8,6 @@ local data = {}
 -- CANNON CONTROL FUNCTIONS
 ------------------------------------
 
--- THIS FUNCTION MAY TAKE MULTIPLE SECONDS TO RETURN
--- It starts aiming the cannon at the given pitch and
--- yaw, and queues two timer events that will go off
--- once the cannon is in position. Then the function
--- stops the cannon's motion and returns true.
-local function aim(pitch, yaw, rpm)
-    -- cannon controller and yaw controller move at 1/8 speed
-    -- of the rpm, hence the (1/8) factor in the equation for dps
-    local dps = 360 * rpm / 60 * (1/8)
-    local tiltSeconds = getTiltSeconds(pitch, dps)
-    local tiltDown = pitch <= 0
-    local turnSeconds = getTurnSeconds(yaw, dps)
-    local turnRight = yaw <= 0
-
-    
-    if (tiltSeconds > 0) then
-        startTilting(tiltDown)
-    end
-    tiltID = os.startTimer(tiltSeconds)
-    if (const.DEBUG) then
-        log("tilting for ".. tiltSeconds .. "seconds...")
-    end
-    if (turnSeconds > 0) then
-        startTurning(turnRight)
-    end
-    turnID = os.startTimer(turnSeconds)
-    if (const.DEBUG) then
-        log("turning for ".. turnSeconds .. "seconds...")
-    end
-
-
-    local function waitCannonTilt()
-        repeat
-            event, id = os.pullEvent("timer")
-        until id == tiltID
-        stopCannonTilt()
-    end
-
-    local function waitCannonTurn()
-        repeat
-            event, id = os.pullEvent("timer")
-        until id == turnID
-        stopCannonTurn()
-    end
-    parallel.waitForAll(waitCannonTilt, waitCannonTurn)
-    --print("Cannon aimed!") -- DEBUG
-    return true
-end
-
 local function startTilting(tiltDown)
     if (const.DEBUG) then
         log("tiltDown: " .. (tiltDown and "true" or "false"))
@@ -118,6 +69,56 @@ local function isReadyToFire(gearshift1, gearshift2)
     return not gearshift1.isRunning() and not gearshift2.isRunning()
 end
 
+-- THIS FUNCTION MAY TAKE MULTIPLE SECONDS TO RETURN
+-- It starts aiming the cannon at the given pitch and
+-- yaw, and queues two timer events that will go off
+-- once the cannon is in position. Then the function
+-- stops the cannon's motion and returns true.
+local function aim(pitch, yaw, rpm)
+    -- cannon controller and yaw controller move at 1/8 speed
+    -- of the rpm, hence the (1/8) factor in the equation for dps
+    local dps = 360 * rpm / 60 * (1/8)
+    local tiltSeconds = getTiltSeconds(pitch, dps)
+    local tiltDown = pitch <= 0
+    local turnSeconds = getTurnSeconds(yaw, dps)
+    local turnRight = yaw <= 0
+
+    
+    if (tiltSeconds > 0) then
+        startTilting(tiltDown)
+    end
+    tiltID = os.startTimer(tiltSeconds)
+    if (const.DEBUG) then
+        log("tilting for ".. tiltSeconds .. "seconds...")
+    end
+    if (turnSeconds > 0) then
+        startTurning(turnRight)
+    end
+    turnID = os.startTimer(turnSeconds)
+    if (const.DEBUG) then
+        log("turning for ".. turnSeconds .. "seconds...")
+    end
+
+
+    local function waitCannonTilt()
+        repeat
+            event, id = os.pullEvent("timer")
+        until id == tiltID
+        stopCannonTilt()
+    end
+
+    local function waitCannonTurn()
+        repeat
+            event, id = os.pullEvent("timer")
+        until id == turnID
+        stopCannonTurn()
+    end
+    parallel.waitForAll(waitCannonTilt, waitCannonTurn)
+    --print("Cannon aimed!") -- DEBUG
+    return true
+end
+
+
 ------------------------------------
 -- CANNON SETUP
 ------------------------------------
@@ -133,10 +134,13 @@ local function saveData(filename)
 end
 
 local function loadData(filename)
-    f = io.open(filename, "r")
+    f = io.open(shell.resolve(filename), "r")
     if (f) then
-        data = textutils.unserialiseJSON(f:read("a"))
+        temp = textutils.unserialiseJSON(f:read("a"))
         f:close()
+        for k,v in pairs(temp) do
+            data[k] = v
+        end
         return true
     else
         return false
@@ -175,7 +179,7 @@ local function setData(t)
 end
 
 local function getVec() 
-    return data.mount_xyz
+    return vector.new(data.mount_xyz.x, data.mount_xyz.y, data.mount_xyz.z)
 end
 
 return {aim = aim, setData = setData, loadData = loadData, saveData = saveData, data = data, getVec = getVec}

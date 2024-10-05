@@ -396,7 +396,7 @@ function menu_init(output)
     -- This is where the magic happens
     local function aim_f(o)
         x, y, z = aim_menu.target.x, aim_menu.target.y, aim_menu.target.z
-        shell.execute("aim.lua", tostring(x), tostring(y), tostring(z),
+        shell.execute("cli.lua", tostring(x), tostring(y), tostring(z),
                       "0", aim_menu.aim_mode or "exact")
         
         local failed = false

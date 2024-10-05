@@ -1,16 +1,67 @@
 local targeting = require("targeting")
 local cannon = require("cannon")
 
-------------------------------------
--- INTERFACE
-------------------------------------
+
 
 local const = {
     CHARGE_POWER = 40,
     AIM_TRIES = 20,
-    CANNON_FILE = "cannon_data.json",
-    DEBUG = true
+    CANNON_FILE = "./cannon_data.json",
+    DEBUG = false
 }
+
+------------------------------------
+-- LOGGING CODE
+------------------------------------
+
+local function log(str)
+    const.LOG:write(str .. "\n")
+end
+
+local function stop_log()
+    const.LOG:close()
+end
+
+local function init_log(filename)
+    const.LOG = io.open(shell.resolve(filename), "w")
+    log(os.date())
+    targeting.useLog(const.LOG)
+end
+
+------------------------------------
+-- INTERFACE
+------------------------------------
+
+-- Aims the cannon at the target (which is a RELATIVE position vector)
+local function targetAim(guess, speed, target, length, tries, manual)
+    if (manual) then
+        print("Aiming Cannon")
+    end
+    local tolerance = 1
+    local yaw = targeting.getHorizAngle(target, cannon.data.facing)
+    repeat 
+        pitch, dist, result = targeting.refineShot(guess, speed, target, tolerance, length, tries)
+        tolerance = tolerance + 1
+    until (pitch ~= nil or tolerance > 5)
+    if (pitch and yaw) then
+        if (const.DEBUG) then
+            log("Aiming cannon with pitch: " .. pitch .. ", yaw: " .. yaw .. ".")
+        end
+        cannon.aim(pitch, yaw, cannon.data.rpm)
+        os.queueEvent("cannon_aim_success", result, dist)
+        if (manual) then
+            print("Ready to Fire ".. dist .. " blocks from target!")
+        end
+        return true
+    else 
+        os.queueEvent("cannon_aim_failure", result, dist)
+        if (manual) then
+            if (not yaw) then print("Not facing target!") end
+            if (not pitch) then print("Target out of range!") end
+        end
+        return false
+    end
+end
 
 local function queryAim()
     if (not cannon.loadData(const.CANNON_FILE)) then
@@ -36,10 +87,9 @@ local function queryAim()
     else
         guess = 0
     end
-    target = vector.new(x, y, z) - cannon.getVec()
-    targeting.targetAim(guess, cannon.data.charges * const.CHARGE_POWER, target, cannon.data.length, const.AIM_TRIES, true)
+    local target = vector.new(x, y, z) - cannon.getVec()
+    targetAim(guess, cannon.data.charges * const.CHARGE_POWER, target, cannon.data.length, const.AIM_TRIES, true)
 end
-
 
 local function queryData() 
     print("Enter the charge, length, rpm, mount x, \
@@ -52,38 +102,6 @@ local function queryData()
         count = count + 1
     end
     return arr
-end
-
-
--- Aims the cannon at the target (which is a RELATIVE position vector)
-local function targetAim(guess, speed, target, length, tries, manual)
-    if (manual) then
-        print("Aiming Cannon")
-    end
-    local tolerance = 1
-    local yaw = targeting.getHorizAngle(target)
-    repeat 
-        pitch, dist, result = targeting.refineShot(guess, speed, target, tolerance, length, tries)
-        tolerance = tolerance + 1
-    until (pitch ~= nil or tolerance > 5)
-    if (pitch and yaw) then
-        if (const.DEBUG) then
-            log("Aiming cannon with pitch: " .. pitch .. ", yaw: " .. yaw .. ".")
-        end
-        cannon.aimCannon(pitch, yaw, data.rpm)
-        os.queueEvent("cannon_aim_success", result, dist)
-        if (manual) then
-            print("Ready to Fire ".. dist .. " blocks from target!")
-        end
-        return true
-    else 
-        os.queueEvent("cannon_aim_failure", result, dist)
-        if (manual) then
-            if (not yaw) then print("Not facing target!") end
-            if (not pitch) then print("Target out of range!") end
-        end
-        return false
-    end
 end
 
 -- Aims the cannon at the target (which is a RELATIVE position vector),
@@ -103,7 +121,7 @@ local function aimAgain(speed, target, length, currentPitch, currentYaw, tries, 
         if (simulate) then
             return result, dist, pitch, yaw
         else
-            cannon.aimCannon(pitch, yaw, data.rpm)
+            cannon.aim(pitch, yaw, cannon.data.rpm)
             os.queueEvent("cannon_aim_success", result, dist)
             return true
         end
@@ -118,24 +136,6 @@ local function aimAgain(speed, target, length, currentPitch, currentYaw, tries, 
 end
 
 ------------------------------------
--- LOGGING CODE
-------------------------------------
-
-local function init_log(filename)
-    const.LOG = io.open(filename, "w")
-    log(os.date())
-end
-
-
-local function log(str)
-    const.LOG:write(str .. "\n")
-end
-
-local function stop_log()
-    const.LOG:close()
-end
-
-------------------------------------
 -- MAIN PROGRAM CODE
 ------------------------------------
 
@@ -143,15 +143,16 @@ end
 
 local function main(args)
     print("loading cannon data...")
-    local temp = cannon.load_data(const.CANNON_FILE)
+    local temp = cannon.loadData(const.CANNON_FILE)
     if (temp) then
         print("loaded cannon data.")
+        print("charges: " .. cannon.data.charges)
     else print("failed to load cannon data.") end
 
     -- Initialize log
     init_log("latest.log")
 
-    if (#args > 0) then
+    if (args and #args > 0) then
         if (#args >= 3 and tonumber(args[1]) ~= nil) then
 
             -- default aim mode is exact
@@ -171,7 +172,7 @@ local function main(args)
         elseif (#args >= 1) then
             if (string.lower(args[1]) == "setup") then
                 if (#args > 1) then
-                    cannon.set_data{
+                    cannon.setData{
                         charges = tonumber(args[2]), 
                         length = tonumber(args[3]),
                         rpm = tonumber(args[4]),

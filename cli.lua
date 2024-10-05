@@ -1,2 +1,2 @@
 controller = require("control")
-controller.cli(...)
+controller.cli({...})

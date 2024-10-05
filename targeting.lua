@@ -47,21 +47,11 @@
 
 -- For safety reasons, cannons can only fire in a 180 degree horizontal arc
 -- around their facing position, so that it cannot fire on its loading
--- mechanisms. This can be changed in getHorizAngle() if you wish.
+-- mechanisms. This functionality is in getHorizAngle().
 
 ------------------------------------
 -- CONSTANTS 
 ------------------------------------
-
--- These data settings are the default values, but can be manually changed in the
--- cannon_data.json file that is created after calling this program with "setup".
--- You can also change these defaults in the set_data() function.
-
--- data.TILT_GEARSHIFT = "left"
--- data.TILT_CLUTCH = "bottom"
--- data.TURN_GEARSHIFT = "right"
--- data.TURN_CLUTCH = "back"
-
 
 local const = {}
 -- NOTE: DEFAULT CHARGE POWER WAS INCREASED FROM 20m/s TO 40m/s
@@ -70,6 +60,81 @@ const.GRAVITY = vector.new(0,-0.05,0)
 const.DRAG = 0.001
 const.AIM_TRIES = 12
 const.DEBUG = true
+
+
+local function useLog(f)
+    const.LOG = f
+end
+
+local function log(str)
+    if (const.LOG) then
+        const.LOG:write(str .. "\n")
+    else
+        print(str)
+    end
+end
+
+------------------------------------
+-- VECTOR HELPER FUNCTIONS
+------------------------------------
+
+-- Returns the distance to target parallel to the XZ plane
+local function getHorizDistance(target)
+    return vector.new(target.x, 0, target.z):length()
+end
+
+-- Returns the angle to the target from the line z = 0 on the
+-- XY plane, with right as -90 (degrees) and left as 90 (degrees)
+-- with positive x and no z being 0 degrees.
+local function getHorizAngle(target, facing)
+    -- TODO: ADD CUSTOMIZATION FOR MAXIMUM TURN RADIUS
+    -- TODO: TEST WITH EACH FACING VALUE
+    if (facing == "north") then
+        if (target.z > 0) then
+            angle = math.deg(math.atan(target.x / target.z))
+        else 
+            angle = nil
+        end
+    elseif (facing == "east") then
+        if (target.x > 0) then
+            angle = math.deg(math.atan(target.z / target.x))
+        else
+            angle = nil
+        end
+    elseif (facing == "south") then
+        if (target.z < 0) then
+            angle = math.deg(math.atan(target.x / target.z))
+        else 
+            angle = nil
+        end
+    elseif (facing == "west") then
+        if (target.x < 0) then
+            angle = -1 * math.deg(math.atan(target.z / target.x))
+        else
+            angle = nil
+        end
+        
+    else error("NO FACING DATA") end
+
+    return angle
+end
+
+local function getTrueHorizAngle(target)
+    if (target.z > 0) then
+        angle = math.deg(math.atan(target.x / target.z))
+    elseif (target.z < 0) then
+        angle = math.deg(math.atan(target.x / target.z))
+    elseif (target.x > 0) then
+        angle = 0
+    else
+        angle = 180
+    end
+    return angle
+end
+
+local function getHorizAngleBetween(current, target)
+    return getTrueHorizAngle(target) - getTrueHorizAngle(current)
+end
 
 ------------------------------------
 -- SIMULATION FUNCTIONS
@@ -80,9 +145,14 @@ local function stepDisplacement(velocity, displacement)
     return displacement
 end
 
-local function stepVelocity(velocity)
-    velocity = velocity + const.GRAVITY
-    velocity = ((velocity * velocity) / 2) * const.DRAG 
+local function stepVelocity(velocity, quadDrag)
+    if (quadDrag) then
+        velocity = velocity + const.GRAVITY
+        velocity = velocity - (velocity:normalize() * ((velocity:dot(velocity)) / 2) * const.DRAG)
+    else
+        velocity = velocity + const.GRAVITY
+        velocity = velocity * (1 - 10 * const.DRAG)
+    end
     return velocity
 end
 
@@ -152,6 +222,11 @@ local function simShot(velocity, target, tolerance, length)
     return result, dist
 end
 
+local function clamp(value, min, max)
+    return math.max(math.min(max, value), min)
+end
+
+
 -- Given a starting "guess" for pitch, simulate shots on the target,
 -- changing the pitch until the shot hits within tolerance blocks
 -- of the target. Target is the relative 
@@ -163,23 +238,23 @@ end
 
 -- Sometimes can have trouble if the shot moves through the target from one tick to another
 local function refineShot(guess, speed, target, tolerance, length, tries)
-    local MAX_PITCH = 60
-    local MIN_PITCH = -30
+    local MAX_PITCH = math.rad(60)
+    local MIN_PITCH = math.rad(-30)
     local xy_target = vector.new(getHorizDistance(target), target.y, 0)
     local increment = math.rad(20) -- starting angle increment value
     local last_result = nil
     local last_distance = nil
     local try = 0
     -- convert degrees to radians to reduce headache
-    local pitch = math.rad(guess)
+    local pitch = clamp(math.rad(guess), MIN_PITCH, MAX_PITCH)
     if (const.DEBUG) then
-        log("Trying to hit " .. table.concat(target) .. " with " .. tolerance .. " block tolerance.")
+        log("Trying to hit " .. tostring(target) .. " with " .. tolerance .. " block tolerance.")
     end
 
     -- initial attempt tries the first guess for pitch
-    direction = vector.new(math.cos(pitch), math.sin(pitch), 0)
-    velocity = direction * speed
-    result, distance = simShot(velocity, xy_target, tolerance, length)
+    local direction = vector.new(math.cos(pitch), math.sin(pitch), 0)
+    local velocity = direction * speed
+    local result, distance = simShot(velocity, xy_target, tolerance, length)
 
     repeat 
 
@@ -189,26 +264,30 @@ local function refineShot(guess, speed, target, tolerance, length, tries)
         -- be used as the pitch for the next iteration. If the previous pitch
         -- is used, then the increment gets cut in half.
         if (result ~= 0) then
-            local direction1 = vector.new(math.cos(pitch - increment), math.sin(pitch - increment), 0)
+            local pitch1 = clamp(pitch - increment, MIN_PITCH, MAX_PITCH)
+            local direction1 = vector.new(math.cos(pitch1), math.sin(pitch1), 0)
             local velocity1 = direction1 * speed
             local result1, distance1 = simShot(velocity1, xy_target, tolerance, length)
             
-            
-            local direction2 = vector.new(math.cos(pitch + increment), math.sin(pitch + increment), 0)
+            local pitch2 = clamp(pitch + increment, MIN_PITCH, MAX_PITCH)
+            local direction2 = vector.new(math.cos(pitch2), math.sin(pitch2), 0)
             local velocity2 = direction2 * speed
             local result2, distance2 = simShot(velocity2, xy_target, tolerance, length)
 
+
             local min_distance = math.min(distance, math.min(distance1, distance2))
             local new_pitch
-            if (distance == min_distance) then
+            if (distance <= min_distance) then
                 new_pitch = pitch
                 increment = increment / 2
             elseif(distance1 == min_distance) then
-                new_pitch = pitch - increment
+                new_pitch = pitch1
+                result = result1
             else
-                new_pitch = pitch + increment
+                new_pitch = pitch2
+                result = result2
             end
-            pitch = math.max(math.min(math.rad(MAX_PITCH), new_pitch), math.rad(MIN_PITCH))
+            pitch = new_pitch
             distance = min_distance
         end
         try = try + 1
@@ -228,66 +307,6 @@ local function refineShot(guess, speed, target, tolerance, length, tries)
         return nil, distance, result
     end
 end 
-------------------------------------
--- VECTOR HELPER FUNCTIONS
-------------------------------------
 
--- Returns the distance to target parallel to the XZ plane
-local function getHorizDistance(target)
-    return vector.new(target.x, 0, target.z):length()
-end
 
--- Returns the angle to the target from the line z = 0 on the
--- XY plane, with right as -90 (degrees) and left as 90 (degrees)
--- with positive x and no z being 0 degrees.
-local function getHorizAngle(target)
-    -- TODO: ADD CUSTOMIZATION FOR MAXIMUM TURN RADIUS
-    -- TODO: TEST WITH EACH FACING VALUE
-    if (data.facing == "north") then
-        if (target.z > 0) then
-            angle = math.deg(math.atan(target.x / target.z))
-        else 
-            angle = nil
-        end
-    elseif (data.facing == "east") then
-        if (target.x > 0) then
-            angle = math.deg(math.atan(target.z / target.x))
-        else
-            angle = nil
-        end
-    elseif (data.facing == "south") then
-        if (target.z < 0) then
-            angle = math.deg(math.atan(target.x / target.z))
-        else 
-            angle = nil
-        end
-    elseif (data.facing == "west") then
-        if (target.x < 0) then
-            angle = -1 * math.deg(math.atan(target.z / target.x))
-        else
-            angle = nil
-        end
-        
-    else error("NO FACING DATA") end
-
-    return angle
-end
-
-local function getTrueHorizAngle(target)
-    if (target.z > 0) then
-        angle = math.deg(math.atan(target.x / target.z))
-    elseif (target.z < 0) then
-        angle = math.deg(math.atan(target.x / target.z))
-    elseif (target.x > 0) then
-        angle = 0
-    else
-        angle = 180
-    end
-    return angle
-end
-
-local function getHorizAngleBetween(current, target)
-    return getTrueHorizAngle(target) - getTrueHorizAngle(current)
-end
-
-return {const = const, getTrueHorizAngle = getTrueHorizAngle, refineShot = refineShot}
+return {const = const, getTrueHorizAngle = getTrueHorizAngle, refineShot = refineShot, getHorizAngle = getHorizAngle, useLog = useLog}
