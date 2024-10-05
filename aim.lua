@@ -63,7 +63,7 @@
 -- data.TURN_CLUTCH = "back"
 
 
-const = {}
+local const = {}
 -- NOTE: DEFAULT CHARGE POWER WAS INCREASED FROM 20m/s TO 40m/s
 const.CHARGE_POWER = 40 -- Base added speed of a powder charge is 40m/s
 const.GRAVITY = vector.new(0,-0.05,0)
@@ -82,7 +82,7 @@ end
 
 local function stepVelocity(velocity)
     velocity = velocity + const.GRAVITY
-    velocity = velocity * const.DRAG
+    velocity = ((velocity * velocity) / 2) * const.DRAG 
     return velocity
 end
 
@@ -117,6 +117,9 @@ local function simShot(velocity, target, tolerance, length)
         result = -1
         dist = (displacement - target):length()
     else
+        -- calculates the distance the target is from the line
+        -- between old_displacement and displacement,
+        -- to get the true distance from the shot's path.
         local a, b, c, topsum, botsum
         a = displacement.y - old_displacement.y
         b = old_displacement.x - displacement.x
@@ -154,40 +157,48 @@ end
 -- of the target. Target is the relative 
 -- XYZ coordinate with the cannon mount as the origin.
 -- The guess for pitch should be 60 to try to shoot at a high angle.
--- Returns a degree between 90 and -90 if it found a successful shot,
+-- Returns a degree between MAX_PITCH and MIN_PITCH if it found a successful shot,
 --  or returns nil if none was found within 10 iterations.
 -- length input is the length of the cannon, makes calculations more precise.
 
 -- Sometimes can have trouble if the shot moves through the target from one tick to another
-local function refineShot(pitch, speed, target, tolerance, length, tries)
+local function refineShot(guess, speed, target, tolerance, length, tries)
     local MAX_PITCH = 60
     local MIN_PITCH = -30
-    xy_target = vector.new(getHorizDistance(target), target.y, 0)
-    increment = math.rad(20) -- starting angle increment value
-    last_result = nil
-    last_distance = nil
-    try = 0
+    local xy_target = vector.new(getHorizDistance(target), target.y, 0)
+    local increment = math.rad(20) -- starting angle increment value
+    local last_result = nil
+    local last_distance = nil
+    local try = 0
     -- convert degrees to radians to reduce headache
-    pitch = math.rad(pitch)
+    local pitch = math.rad(guess)
     if (const.DEBUG) then
         log("Trying to hit " .. table.concat(target) .. " with " .. tolerance .. " block tolerance.")
     end
-    repeat 
-        direction = vector.new(math.cos(pitch), math.sin(pitch), 0)
-        velocity = direction * speed
-        result, distance = simShot(velocity, xy_target, tolerance, length)
-        
-        if (result ~= 0) then
-            direction1 = vector.new(math.cos(pitch - increment), math.sin(pitch - increment), 0)
-            velocity1 = direction1 * speed
-            result1, distance1 = simShot(velocity1, xy_target, tolerance, length)
-            
-            
-            direction2 = vector.new(math.cos(pitch + increment), math.sin(pitch + increment), 0)
-            velocity2 = direction2 * speed
-            result2, distance2 = simShot(velocity2, xy_target, tolerance, length)
 
-            min_distance = math.min(distance, math.min(distance1, distance2))
+    -- initial attempt tries the first guess for pitch
+    direction = vector.new(math.cos(pitch), math.sin(pitch), 0)
+    velocity = direction * speed
+    result, distance = simShot(velocity, xy_target, tolerance, length)
+
+    repeat 
+
+        -- if the previous shot didn't hit, then simulate two shots, one
+        -- at pitch - increment, and one at pitch + increment.
+        -- whichever is closer, between these two and the previous pitch, will
+        -- be used as the pitch for the next iteration. If the previous pitch
+        -- is used, then the increment gets cut in half.
+        if (result ~= 0) then
+            local direction1 = vector.new(math.cos(pitch - increment), math.sin(pitch - increment), 0)
+            local velocity1 = direction1 * speed
+            local result1, distance1 = simShot(velocity1, xy_target, tolerance, length)
+            
+            
+            local direction2 = vector.new(math.cos(pitch + increment), math.sin(pitch + increment), 0)
+            local velocity2 = direction2 * speed
+            local result2, distance2 = simShot(velocity2, xy_target, tolerance, length)
+
+            local min_distance = math.min(distance, math.min(distance1, distance2))
             local new_pitch
             if (distance == min_distance) then
                 new_pitch = pitch
@@ -198,6 +209,7 @@ local function refineShot(pitch, speed, target, tolerance, length, tries)
                 new_pitch = pitch + increment
             end
             pitch = math.max(math.min(math.rad(MAX_PITCH), new_pitch), math.rad(MIN_PITCH))
+            distance = min_distance
         end
         try = try + 1
         if (const.DEBUG) then
@@ -211,7 +223,7 @@ local function refineShot(pitch, speed, target, tolerance, length, tries)
     until (result == 0 or try >= tries)
 
     if (result == 0) then
-        return math.deg(pitch), distance
+        return math.deg(pitch), distance, 0
     else
         return nil, distance, result
     end
@@ -261,349 +273,21 @@ local function getHorizAngle(target)
     return angle
 end
 
-------------------------------------
--- CANNON CONTROL FUNCTIONS
-------------------------------------
-
--- THIS FUNCTION MAY TAKE MULTIPLE SECONDS TO RETURN
--- It starts aiming the cannon at the given pitch and
--- yaw, and queues two timer events that will go off
--- once the cannon is in position. Then the function
--- stops the cannon's motion and returns true.
-local function aimCannon(pitch, yaw, rpm)
-    -- cannon controller and yaw controller move at 1/8 speed
-    -- of the rpm, hence the (1/8) factor in the equation for dps
-    local dps = 360 * rpm / 60 * (1/8)
-    local tiltSeconds = getTiltSeconds(pitch, dps)
-    local tiltDown = pitch <= 0
-    local turnSeconds = getTurnSeconds(yaw, dps)
-    local turnRight = yaw <= 0
-
-    
-    if (tiltSeconds > 0) then
-        startTilting(tiltDown)
-    end
-    tiltID = os.startTimer(tiltSeconds)
-    if (const.DEBUG) then
-        log("tilting for ".. tiltSeconds .. "seconds...")
-    end
-    if (turnSeconds > 0) then
-        startTurning(turnRight)
-    end
-    turnID = os.startTimer(turnSeconds)
-    if (const.DEBUG) then
-        log("turning for ".. turnSeconds .. "seconds...")
-    end
-
-
-    local function waitCannonTilt()
-        repeat
-            event, id = os.pullEvent("timer")
-        until id == tiltID
-        stopCannonTilt()
-    end
-
-    local function waitCannonTurn()
-        repeat
-            event, id = os.pullEvent("timer")
-        until id == turnID
-        stopCannonTurn()
-    end
-    parallel.waitForAll(waitCannonTilt, waitCannonTurn)
-    --print("Cannon aimed!") -- DEBUG
-    return true
-end
-
-local function startTilting(tiltDown)
-    if (const.DEBUG) then
-        log("tiltDown: " .. (tiltDown and "true" or "false"))
-    end
-    if (tiltDown) then
-        rs.setOutput(data.TILT_GEARSHIFT, true)
-    end
-    rs.setOutput(data.TILT_CLUTCH, true)
-end
-
-
-local function startTurning(turnRight)
-    if (const.DEBUG) then
-        log("turnRight: " .. (turnRight and "true" or "false"))
-    end
-    if (turnRight) then
-        rs.setOutput(data.TURN_GEARSHIFT, true)
-    end
-    rs.setOutput(data.TURN_CLUTCH, true)
-end
-
-local function stopCannonTilt()    
-    if (const.DEBUG) then
-    log("stopping tilt")
-end
-    rs.setOutput(data.TILT_CLUTCH, false)
-    rs.setOutput(data.TILT_GEARSHIFT, false)
-end
-
-local function stopCannonTurn()
-    if (const.DEBUG) then
-        log("stopping turn")
-    end
-    rs.setOutput(data.TURN_CLUTCH, false)
-    rs.setOutput(data.TURN_GEARSHIFT, false)
-end
-
-local function getTiltSeconds(pitch, dps)
-    return math.abs(pitch / dps)
-end
-
-local function getTurnSeconds(yaw, dps)
-    return math.abs(yaw / dps)
-end
-
-------------------------------------
--- CANNON SETUP
-------------------------------------
-local function saveData()
-    f = io.open("cannon_data.json", "w")
-    if (f) then
-        f:write(textutils.serialiseJSON(data))
-        f:close()
-        return true
+local function getTrueHorizAngle(target)
+    if (target.z > 0) then
+        angle = math.deg(math.atan(target.x / target.z))
+    elseif (target.z < 0) then
+        angle = math.deg(math.atan(target.x / target.z))
+    elseif (target.x > 0) then
+        angle = 0
     else
-        return false
+        angle = 180
     end
+    return angle
 end
 
-local function load_data()
-    f = io.open("cannon_data.json", "r")
-    if (f) then
-        temp = textutils.unserialiseJSON(f:read("a"))
-        f:close()
-        return temp
-    else
-        return nil
-    end
+local function getHorizAngleBetween(current, target)
+    return getTrueHorizAngle(target) - getTrueHorizAngle(current)
 end
 
--- call using set_data{} and include charges = 4, etc. in the table
-local function set_data(t)
-    if (t.charges) then
-        data.charges = t.charges
-    end
-    if (t.length) then
-        data.length = t.length
-    end
-    if (t.rpm) then
-        data.rpm = t.rpm
-    end
-    if (t.x and t.y and t.z) then
-        data.mount_xyz = vector.new(t.x, t.y, t.z)
-    end
-    if (t.facing) then
-        data.facing = t.facing
-    end
-    if (not data.TURN_GEARSHIFT) then
-        data.TURN_GEARSHIFT = "right"
-    end
-    if (not data.TURN_CLUTCH) then
-        data.TURN_CLUTCH = "back"
-    end
-    if (not data.TILT_GEARSHIFT) then
-        data.TILT_GEARSHIFT = "left"
-    end
-    if (not data.TILT_CLUTCH) then
-        data.TILT_CLUTCH = "top"
-    end
-end
-
-------------------------------------
--- INTERFACE
-------------------------------------
-
-local function queryAim()
-    print("Enter the coordinates (X, Y, Z) you would like to shoot at:")
-
-    print("X: ")
-    local x = tonumber(io.read()) 
-
-    print("Y: ")
-    local y = tonumber(io.read()) 
-
-    print("Z: ")
-    local z = tonumber(io.read()) 
-
-    print("Aim high or low? (0 for low, 1 for high)")
-    local high = tonumber(io.read()) 
-    local guess
-    if (high == 1) then
-        guess = 60
-    else
-        guess = 0
-    end
-    target = vector.new(x, y, z) - data.mount_xyz
-    targetAim(guess, data.charges * const.CHARGE_POWER, target, data.length, const.AIM_TRIES, true)
-end
-
-
-local function queryData() 
-    print("Enter the charge, length, rpm, mount x, \
-    mount y, mount z, and facing values on a single line, separated by spaces.")
-    local str = io.read()
-    local arr = {}
-    local count = 1
-    for v in string.gmatch(str, "%-?%d+%.?%d*") do
-        arr[count] = v
-        count = count + 1
-    end
-    return arr
-end
-
-
--- Aims the cannon at the target (which is a RELATIVE position vector)
-local function targetAim(guess, speed, target, length, tries, manual)
-    if (manual) then
-        print("Aiming Cannon")
-    end
-    local tolerance = 1
-    local yaw = getHorizAngle(target)
-    repeat 
-        pitch, dist, result = refineShot(guess, speed, target, tolerance, length, tries)
-        tolerance = tolerance + 1
-    until (pitch ~= nil or tolerance > 5)
-    if (pitch and yaw) then
-        if (const.DEBUG) then
-            log("Aiming cannon with pitch: " .. pitch .. ", yaw: " .. yaw .. ".")
-        end
-        aimCannon(pitch, yaw, data.rpm)
-        os.queueEvent("cannon_aim_success", result, dist)
-        if (manual) then
-            print("Ready to Fire ".. dist .. " blocks from target!")
-        end
-        return true
-    else 
-        os.queueEvent("cannon_aim_failure", result, dist)
-        if (manual) then
-            if (not yaw) then print("Not facing target!") end
-            if (not pitch) then print("Target out of range!") end
-        end
-        return false
-    end
-end
-
-------------------------------------
--- LOGGING CODE
-------------------------------------
-
-local function init_log(filename)
-    const.LOG = io.open(filename, "w")
-    log(os.date())
-end
-
-
-local function log(str)
-    const.LOG:write(str .. "\n")
-end
-
-local function stop_log()
-    const.LOG:close()
-end
-
-------------------------------------
--- MAIN PROGRAM CODE
-------------------------------------
-
-local function main(args)
-    local temp = load_data()
-    print("loading cannon data...")
-    if (temp) then
-        data = temp
-        print("loaded cannon data.")
-    else print("failed to load cannon data.") end
-
-    -- Initialize log
-    init_log("latest.log")
-
-    -- aim [target x] [target y] [target z] [0 for low arc, 1 for high arc] ["relative" or "exact" (exact is default)]
-    args = {...}
-    if (#args > 0) then
-        if (#args >= 3 and tonumber(args[1]) ~= nil) then
-
-            -- default aim mode is exact
-            if (args[5] ~= nil and args[5] == "relative") then
-                target = vector.new(args[1], args[2], args[3])
-            else
-                target = vector.new(args[1], args[2], args[3]) - data.mount_xyz
-            end     
-            -- default initial trajectory is low
-            if (args[4] ~= nil and args[4] == "1") then
-                guess = 60
-            else
-                guess = 0
-            end
-
-            targetAim(guess, data.charges * const.CHARGE_POWER, target, data.length, const.AIM_TRIES, false)
-        elseif (#args >= 1) then
-            if (string.lower(args[1]) == "setup") then
-                if (#args > 1) then
-                    data = load_data() or {}
-                    set_data{
-                        charges = tonumber(args[2]), 
-                        length = tonumber(args[3]),
-                        rpm = tonumber(args[4]),
-                        x = tonumber(args[5]),
-                        y = tonumber(args[6]),
-                        z = tonumber(args[7]),
-                        facing = args[8]}
-                    saveData()
-                else 
-                    local arr = queryData()
-                    setData{
-                        charges = tonumber(arr[1]), 
-                        length = tonumber(arr[2]),
-                        rpm = tonumber(arr[3]),
-                        x = tonumber(arr[4]),
-                        y = tonumber(arr[5]),
-                        z = tonumber(arr[6]),
-                        facing = arr[7]}
-                    saveData()
-                end
-            end
-        end
-    else 
-        queryAim()
-    end
-
-    stop_log()
-end
-
-------------------------------------
--- INFO (OUTDATED)
-------------------------------------
--- A max length nethersteel cannon can shoot
--- up to 550 blocks away, at the same y value, at
--- 30 degrees. (using 8 powder charges)
--- It can shoot 585 away at y value 50 lower.
--- 610 away at 100 lower, 655 at 200, 672 at 250
--- 
--- A max length steel cannon can shoot up to 370
--- blocks away, at the same y value, at 30 degrees.
--- (using 6 powder charges)
--- It can shoot 403 blocks away at y value 50 lower.
--- 428 blocks away at 100 lower, 470 at 200, 486 at 250
-------------------------------------
--- TESTING
-------------------------------------
-
--- target_xyz = vector.new(33.00, 0.00, 111.07)
--- target = target_xyz - mount_xyz
--- tolerance = 3 -- acceptable distance from target
--- length = 31.5 -- length of the cannon past the middle of the cannon mount
--- tries = 20 -- how many iterations of refinement to go through
--- speed = data.CHARGES * const.CHARGE_POWER
--- print("Target is " .. target:tostring())
--- print("Speed is " .. speed)
--- yaw = getHorizAngle(target)
--- pitch = refineShot(0, speed, target, tolerance, length, tries, true)
--- print("Shoot at pitch " .. pitch .. " to hit target.")
--- aimCannon(pitch, yaw, 4)
-
-return {setData = setData, saveData = saveData, queryAim = queryAim, targetAim = targetAim, cli = main}
+return {const = const, getTrueHorizAngle = getTrueHorizAngle, refineShot = refineShot}
