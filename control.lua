@@ -1,4 +1,4 @@
-local targeting = require("aim")
+local targeting = require("targeting")
 local cannon = require("cannon")
 
 ------------------------------------
